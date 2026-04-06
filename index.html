@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stall Estimator</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0e0f11;--surface:#16181c;--surface2:#1e2127;--border:#2a2d35;
+  --accent:#d4f53c;--accent-dim:rgba(212,245,60,0.10);
+  --text:#e8eaf0;--muted:#6b7280;
+  --danger:#ff6b6b;--info:#60a5fa;--success:#4ade80;--warn:#fbbf24;
+  --off:#b06aff;--on:#ff9f40;
+  --mono:'DM Mono',monospace;--sans:'Syne',sans-serif;--r:6px;
+}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--sans);overflow:hidden}
+.app{display:grid;grid-template-columns:390px 1fr;grid-template-rows:52px 1fr;height:100vh}
+
+/* header */
+header{grid-column:1/-1;display:flex;align-items:center;gap:16px;padding:0 20px;
+  border-bottom:1px solid var(--border);background:var(--surface)}
+.logo{font-size:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);font-family:var(--mono)}
+.logo span{color:var(--muted)}
+.hstat{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);font-family:var(--mono)}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--muted)}
+.dot.live{background:var(--success);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* sidebar */
+.sidebar{background:var(--surface);border-right:1px solid var(--border);overflow-y:auto;display:flex;flex-direction:column}
+.sidebar::-webkit-scrollbar{width:4px}
+.sidebar::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.panel{border-bottom:1px solid var(--border);padding:18px}
+.ptitle{font-size:9px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);margin-bottom:14px;font-family:var(--mono)}
+
+/* tabs */
+.tabs{display:flex;gap:2px;background:var(--bg);border-radius:var(--r);padding:3px;margin-bottom:16px}
+.tab{flex:1;padding:7px 10px;font-size:11px;font-weight:600;border:none;border-radius:4px;cursor:pointer;
+  background:transparent;color:var(--muted);transition:all .15s;font-family:var(--sans);letter-spacing:.04em}
+.tab.active{background:var(--accent);color:#000}
+.tab:hover:not(.active){color:var(--text);background:var(--surface2)}
+.tc{display:none}.tc.active{display:block}
+
+/* form */
+label{display:block;font-size:11px;color:var(--muted);margin-bottom:5px;font-family:var(--mono)}
+input[type=text],input[type=number]{width:100%;padding:9px 11px;background:var(--bg);border:1px solid var(--border);
+  border-radius:var(--r);color:var(--text);font-size:13px;font-family:var(--mono);outline:none;transition:border-color .15s}
+input:focus{border-color:var(--accent)}
+.field{margin-bottom:12px}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+input[type=range]{width:100%;accent-color:var(--accent);height:3px;margin:6px 0}
+.range-row{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);font-family:var(--mono)}
+
+/* buttons */
+.btn{width:100%;padding:11px;border:none;border-radius:var(--r);cursor:pointer;
+  font-family:var(--sans);font-size:13px;font-weight:700;letter-spacing:.06em;
+  transition:all .15s;display:flex;align-items:center;justify-content:center;gap:8px}
+.btn-primary{background:var(--accent);color:#000}
+.btn-primary:hover{background:#c8e836;transform:translateY(-1px)}
+.btn-primary:active{transform:translateY(0)}
+.btn-primary:disabled{opacity:.4;cursor:not-allowed;transform:none}
+.btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border);margin-top:8px}
+.btn-ghost:hover{border-color:var(--text);color:var(--text)}
+
+/* dropzone */
+.dropzone{border:2px dashed var(--border);border-radius:var(--r);padding:28px 20px;
+  text-align:center;cursor:pointer;transition:all .2s}
+.dropzone:hover,.dropzone.drag{border-color:var(--accent);background:var(--accent-dim)}
+.dz-icon{font-size:26px;margin-bottom:8px;opacity:.4}
+.dz-text{font-size:12px;color:var(--muted);line-height:1.6}
+.dz-text strong{color:var(--text);display:block;margin-bottom:3px;font-size:13px}
+#file-input{display:none}
+
+/* result cards */
+.rcards{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+.rcard{background:var(--bg);border-radius:var(--r);padding:12px;border:1px solid var(--border)}
+.rcard .val{font-size:26px;font-weight:800;font-family:var(--mono);line-height:1}
+.rcard .lbl{font-size:10px;color:var(--muted);margin-top:4px;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em}
+.rcard.wide{grid-column:1/-1}
+.rcard.wide .val{font-size:36px}
+.rcard.off .val{color:var(--off)}
+.rcard.on  .val{color:var(--on)}
+.rcard.tot .val{color:var(--accent)}
+
+/* confidence */
+.cpill{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;
+  font-size:10px;font-family:var(--mono);font-weight:500}
+.cpill.high{background:rgba(74,222,128,.15);color:var(--success)}
+.cpill.medium{background:rgba(251,191,36,.12);color:var(--warn)}
+.cpill.low{background:rgba(255,107,107,.12);color:var(--danger)}
+
+/* legend chips */
+.legend{display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+.lchip{display:flex;align-items:center;gap:5px;font-size:10px;font-family:var(--mono);color:var(--muted)}
+.lchip .swatch{width:12px;height:12px;border-radius:2px;flex-shrink:0}
+
+/* street list */
+.slist{max-height:200px;overflow-y:auto;margin-top:8px}
+.slist::-webkit-scrollbar{width:3px}
+.slist::-webkit-scrollbar-thumb{background:var(--border)}
+.srow{display:flex;align-items:center;justify-content:space-between;padding:7px 8px;border-radius:4px;transition:background .1s}
+.srow:hover{background:var(--surface2)}
+.sname{font-size:11px;color:var(--text);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:185px}
+.stag{font-size:9px;color:var(--muted);font-family:var(--mono);margin-top:1px}
+.smeta{font-size:11px;color:var(--muted);font-family:var(--mono);flex-shrink:0}
+.sstalls{font-size:12px;font-weight:600;color:var(--accent);font-family:var(--mono);flex-shrink:0;margin-left:8px}
+
+/* annotated image */
+.ann-wrap{position:relative;margin-top:12px;border-radius:var(--r);overflow:hidden;border:1px solid var(--border)}
+.ann-img{width:100%;display:block}
+.ann-caption{font-size:10px;color:var(--muted);font-family:var(--mono);padding:6px 8px;
+  background:var(--bg);border-top:1px solid var(--border);line-height:1.5}
+
+/* map */
+#map{width:100%;height:100%}
+.map-container{position:relative}
+.moverlay{position:absolute;top:12px;right:12px;z-index:1000;background:var(--surface);
+  border:1px solid var(--border);border-radius:var(--r);padding:10px 14px;
+  font-family:var(--mono);font-size:11px;color:var(--muted);pointer-events:none}
+.moverlay strong{color:var(--text);display:block;margin-bottom:2px;font-size:12px}
+
+/* misc */
+.loading{display:flex;align-items:center;gap:10px;padding:12px;background:var(--accent-dim);
+  border:1px solid var(--accent);border-radius:var(--r);font-size:12px;font-family:var(--mono);color:var(--accent)}
+.spinner{width:14px;height:14px;border:2px solid var(--accent);border-top-color:transparent;
+  border-radius:50%;animation:spin .6s linear infinite;flex-shrink:0}
+@keyframes spin{to{transform:rotate(360deg)}}
+.empty{text-align:center;padding:28px 16px;color:var(--muted);font-size:12px;font-family:var(--mono);line-height:1.8}
+.empty .icon{font-size:28px;display:block;margin-bottom:10px;opacity:.25}
+.errmsg{background:rgba(255,107,107,.1);border:1px solid rgba(255,107,107,.3);border-radius:var(--r);
+  padding:10px 12px;font-size:12px;font-family:var(--mono);color:var(--danger)}
+.note-box{font-size:11px;color:var(--muted);font-family:var(--mono);line-height:1.7;
+  padding:10px;background:var(--bg);border-radius:4px;border:1px solid var(--border);margin-top:8px}
+.radius-label{background:var(--bg);padding:2px 6px;border-radius:3px;font-size:11px;
+  font-family:var(--mono);color:var(--accent);border:1px solid var(--border);white-space:nowrap}
+.skipped-note{font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:6px;padding:6px 8px;
+  background:var(--bg);border-radius:4px;border-left:2px solid var(--border)}
+
+/* leaflet */
+.leaflet-container{background:#1a1d23}
+.leaflet-tile{filter:invert(1) hue-rotate(180deg) brightness(.9) contrast(.85)}
+.leaflet-control-zoom a{background:var(--surface)!important;color:var(--text)!important;border-color:var(--border)!important}
+.leaflet-control-attribution{background:rgba(14,15,17,.8)!important;color:var(--muted)!important;font-size:9px!important}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="logo">Stall<span>/</span>Estimator</div>
+    <div style="font-size:11px;color:var(--muted);font-family:var(--mono)">v0.2 · parallel · OSM-verified</div>
+    <div class="hstat">
+      <div class="dot" id="api-dot"></div>
+      <span id="api-status">connecting…</span>
+    </div>
+  </header>
+
+  <div class="sidebar">
+    <div class="panel">
+      <div class="tabs">
+        <button class="tab active" onclick="switchTab('map')">Map query</button>
+        <button class="tab" onclick="switchTab('image')">Image analysis</button>
+      </div>
+
+      <!-- MAP TAB -->
+      <div class="tc active" id="tab-map">
+        <div class="field">
+          <label>Search location</label>
+          <div style="display:flex;gap:6px">
+            <input type="text" id="search-input" placeholder="e.g. Queen St W, Toronto"
+                   onkeydown="if(event.key==='Enter')geocode()">
+            <button class="btn btn-primary" style="width:auto;padding:9px 14px;flex-shrink:0" onclick="geocode()">→</button>
+          </div>
+        </div>
+        <div class="row2">
+          <div class="field">
+            <label>Latitude</label>
+            <input type="number" id="lat" value="43.6532" step="0.0001" onchange="updateMapFromInputs()">
+          </div>
+          <div class="field">
+            <label>Longitude</label>
+            <input type="number" id="lon" value="-79.3832" step="0.0001" onchange="updateMapFromInputs()">
+          </div>
+        </div>
+        <div class="field">
+          <label>Search radius</label>
+          <input type="range" id="radius" min="100" max="2000" value="500" step="50" oninput="updateRadius(this.value)">
+          <div class="range-row"><span>100m</span><span id="radius-val">500m</span><span>2km</span></div>
+        </div>
+        <button class="btn btn-primary" id="run-btn" onclick="runEstimate()">
+          <span id="run-label">Estimate on-street stalls</span>
+        </button>
+        <button class="btn btn-ghost" onclick="useMapCenter()">Use map center</button>
+
+        <div class="note-box" style="margin-top:12px">
+          Only roads with an explicit OSM <code>parking:lane</code> tag are counted.
+          Roads with no tag are excluded. This avoids guessing.
+        </div>
+      </div>
+
+      <!-- IMAGE TAB -->
+      <div class="tc" id="tab-image">
+        <div class="dropzone" id="dropzone"
+             onclick="document.getElementById('file-input').click()"
+             ondragover="event.preventDefault();this.classList.add('drag')"
+             ondragleave="this.classList.remove('drag')"
+             ondrop="handleDrop(event)">
+          <div class="dz-icon">⬆</div>
+          <div class="dz-text" id="dz-text">
+            <strong>Drop satellite image here</strong>
+            PNG or JPG · up to 25MB<br>Google Earth, Maps screenshot, etc.
+          </div>
+        </div>
+        <input type="file" id="file-input" accept="image/*" onchange="handleFileSelect(this.files[0])">
+        <button class="btn btn-primary" id="img-btn" onclick="runImageAnalysis()" style="margin-top:12px" disabled>
+          Analyse image
+        </button>
+
+        <div class="legend" style="margin-top:14px">
+          <div class="lchip"><div class="swatch" style="background:#00dc50"></div>Stall lines</div>
+          <div class="lchip"><div class="swatch" style="background:#b43cff"></div>Off-street lot</div>
+          <div class="lchip"><div class="swatch" style="background:#ffa028"></div>On-street edge</div>
+        </div>
+        <div style="font-size:10px;color:var(--muted);font-family:var(--mono);line-height:1.6">
+          The annotated image is returned with coloured boxes drawn on it showing what was detected and counted.
+        </div>
+      </div>
+    </div>
+
+    <!-- Results -->
+    <div class="panel" id="results-panel">
+      <div class="ptitle">Results</div>
+      <div id="results-content">
+        <div class="empty">
+          <span class="icon">P</span>
+          Run a map query or drop an image<br>to see stall estimates
+        </div>
+      </div>
+    </div>
+
+    <!-- Street breakdown (map query only) -->
+    <div class="panel" id="streets-panel" style="display:none">
+      <div class="ptitle">Confirmed parking streets</div>
+      <div class="slist" id="street-list"></div>
+    </div>
+
+    <!-- Annotated image (image analysis only) -->
+    <div class="panel" id="ann-panel" style="display:none">
+      <div class="ptitle">Annotated image</div>
+      <div class="ann-wrap">
+        <img id="ann-img" class="ann-img" src="" alt="Annotated">
+        <div class="ann-caption" id="ann-caption"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Map -->
+  <div class="map-container">
+    <div id="map"></div>
+    <div class="moverlay" id="moverlay">
+      <strong>Click map to set location</strong>
+      Pan &amp; click, or use the form
+    </div>
+  </div>
+</div>
+
+<script>
+let map, radiusCircle, radiusLabel, selectedFile = null;
+const API = '';
+
+window.addEventListener('load', () => { initMap(); checkHealth(); });
+
+function checkHealth() {
+  fetch(`${API}/health`).then(r => {
+    document.getElementById('api-dot').classList.toggle('live', r.ok);
+    document.getElementById('api-status').textContent = r.ok ? 'API ready' : 'API error';
+  }).catch(() => { document.getElementById('api-status').textContent = 'API offline'; });
+}
+
+// ── Map ────────────────────────────────────────────────────────────────────
+function initMap() {
+  map = L.map('map',{zoomControl:true}).setView([43.6532,-79.3832],15);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+    attribution:'© OpenStreetMap contributors',maxZoom:19
+  }).addTo(map);
+  map.on('click', e => {
+    document.getElementById('lat').value = e.latlng.lat.toFixed(6);
+    document.getElementById('lon').value = e.latlng.lng.toFixed(6);
+    updateCircle(e.latlng.lat, e.latlng.lng);
+    updateOverlay(e.latlng.lat, e.latlng.lng);
+  });
+  map.on('moveend', () => { const c=map.getCenter(); updateOverlay(c.lat,c.lng); });
+  updateCircle(43.6532,-79.3832);
+}
+
+function updateCircle(lat,lng) {
+  const r = parseInt(document.getElementById('radius').value);
+  if (radiusCircle) { map.removeLayer(radiusCircle); map.removeLayer(radiusLabel); }
+  radiusCircle = L.circle([lat,lng],{radius:r,color:'#d4f53c',fillColor:'#d4f53c',
+    fillOpacity:.07,weight:1.5,dashArray:'5 5'}).addTo(map);
+  radiusLabel = L.marker([lat,lng],{
+    icon:L.divIcon({className:'',html:`<div class="radius-label">${r}m</div>`,iconAnchor:[30,-6]})
+  }).addTo(map);
+}
+
+function updateOverlay(lat,lng) {
+  document.getElementById('moverlay').innerHTML =
+    `<strong>${lat.toFixed(5)}, ${lng.toFixed(5)}</strong>Click to set query center`;
+}
+
+function updateMapFromInputs() {
+  const lat=parseFloat(document.getElementById('lat').value);
+  const lng=parseFloat(document.getElementById('lon').value);
+  if(!isNaN(lat)&&!isNaN(lng)){map.setView([lat,lng],map.getZoom());updateCircle(lat,lng);}
+}
+
+function useMapCenter() {
+  const c=map.getCenter();
+  document.getElementById('lat').value=c.lat.toFixed(6);
+  document.getElementById('lon').value=c.lng.toFixed(6);
+  updateCircle(c.lat,c.lng);
+}
+
+function updateRadius(val) {
+  document.getElementById('radius-val').textContent = val>=1000?(val/1000).toFixed(1)+'km':val+'m';
+  const lat=parseFloat(document.getElementById('lat').value);
+  const lng=parseFloat(document.getElementById('lon').value);
+  updateCircle(lat,lng);
+}
+
+async function geocode() {
+  const q=document.getElementById('search-input').value.trim();
+  if(!q) return;
+  try {
+    const r=await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`);
+    const d=await r.json();
+    if(!d.length){alert('Location not found.');return;}
+    document.getElementById('lat').value=parseFloat(d[0].lat).toFixed(6);
+    document.getElementById('lon').value=parseFloat(d[0].lon).toFixed(6);
+    map.setView([d[0].lat,d[0].lon],15);
+    updateCircle(parseFloat(d[0].lat),parseFloat(d[0].lon));
+  } catch(e){alert('Geocoding failed: '+e.message);}
+}
+
+// ── Tabs ──────────────────────────────────────────────────────────────────
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',(i===0&&tab==='map')||(i===1&&tab==='image')));
+  document.getElementById('tab-map').classList.toggle('active',tab==='map');
+  document.getElementById('tab-image').classList.toggle('active',tab==='image');
+}
+
+// ── On-Street ─────────────────────────────────────────────────────────────
+async function runEstimate() {
+  const lat=parseFloat(document.getElementById('lat').value);
+  const lon=parseFloat(document.getElementById('lon').value);
+  const radius=parseInt(document.getElementById('radius').value);
+  if(isNaN(lat)||isNaN(lon)){showError('Enter valid coordinates.');return;}
+  setRunning(true);
+  showLoading('Querying OpenStreetMap for parking tags…');
+  document.getElementById('streets-panel').style.display='none';
+  document.getElementById('ann-panel').style.display='none';
+  try {
+    const resp=await fetch(`${API}/estimate/on-street`,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({lat,lon,radius_m:radius})
+    });
+    if(!resp.ok){const e=await resp.json();throw new Error(e.detail||resp.statusText);}
+    renderOnStreet(await resp.json());
+  } catch(e){showError(e.message);}
+  finally{setRunning(false);}
+}
+
+function renderOnStreet(d) {
+  document.getElementById('results-content').innerHTML = `
+    <div class="rcards">
+      <div class="rcard wide tot">
+        <div class="val">${d.on_street_stalls.toLocaleString()}</div>
+        <div class="lbl">On-street stalls (parallel, verified)</div>
+      </div>
+      <div class="rcard">
+        <div class="val" style="color:var(--success)">${d.streets_analyzed}</div>
+        <div class="lbl">Parkable streets</div>
+      </div>
+      <div class="rcard">
+        <div class="val" style="color:var(--text)">${(d.total_road_length_m/1000).toFixed(2)}</div>
+        <div class="lbl">Road km counted</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <span class="cpill ${d.confidence}">● ${d.confidence} confidence</span>
+      <span style="font-size:10px;color:var(--muted);font-family:var(--mono)">${new Date().toLocaleTimeString()}</span>
+    </div>
+    <div class="skipped-note">
+      ${d.streets_skipped} road${d.streets_skipped!==1?'s':''} in radius had no parking tag and were excluded.
+    </div>
+    <div style="font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:8px;line-height:1.6">
+      Formula: (length − 16m buffer) ÷ 6.7m × sides tagged in OSM
+    </div>`;
+
+  if (d.segments.length) {
+    const max = Math.max(...d.segments.map(s=>s.stalls));
+    document.getElementById('street-list').innerHTML = d.segments.map(s=>`
+      <div class="srow">
+        <div style="min-width:0">
+          <div class="sname">${s.name}</div>
+          <div class="stag">${s.parking_tag} · ${s.both_sides?'both sides':'one side'}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+          <span class="smeta">${Math.round(s.length_m)}m</span>
+          <span class="sstalls">${s.stalls}</span>
+        </div>
+      </div>`).join('');
+    document.getElementById('streets-panel').style.display='block';
+  }
+}
+
+// ── Image ─────────────────────────────────────────────────────────────────
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById('dropzone').classList.remove('drag');
+  const f=e.dataTransfer.files[0]; if(f) handleFileSelect(f);
+}
+
+function handleFileSelect(file) {
+  if(!file) return;
+  selectedFile=file;
+  document.getElementById('dz-text').innerHTML=
+    `<strong>${file.name}</strong>${(file.size/1024/1024).toFixed(2)} MB · ready`;
+  document.getElementById('img-btn').disabled=false;
+}
+
+async function runImageAnalysis() {
+  if(!selectedFile) return;
+  showLoading('Running edge detection and line clustering…');
+  document.getElementById('img-btn').disabled=true;
+  document.getElementById('streets-panel').style.display='none';
+  document.getElementById('ann-panel').style.display='none';
+  const form=new FormData(); form.append('file',selectedFile);
+  try {
+    const resp=await fetch(`${API}/estimate/image`,{method:'POST',body:form});
+    if(!resp.ok){const e=await resp.json();throw new Error(e.detail||resp.statusText);}
+    renderImage(await resp.json());
+  } catch(e){showError(e.message);}
+  finally{document.getElementById('img-btn').disabled=false;}
+}
+
+function renderImage(d) {
+  document.getElementById('results-content').innerHTML = `
+    <div class="rcards">
+      <div class="rcard wide tot">
+        <div class="val">${d.total_stalls.toLocaleString()}</div>
+        <div class="lbl">Total stalls detected</div>
+      </div>
+      <div class="rcard off">
+        <div class="val">${d.off_street_stalls}</div>
+        <div class="lbl">Off-street (lots)</div>
+      </div>
+      <div class="rcard on">
+        <div class="val">${d.on_street_stalls}</div>
+        <div class="lbl">On-street (edges)</div>
+      </div>
+      <div class="rcard">
+        <div class="val" style="color:var(--text)">${d.line_count}</div>
+        <div class="lbl">Lines detected</div>
+      </div>
+      <div class="rcard">
+        <div class="val" style="color:var(--text)">${d.lots_detected}</div>
+        <div class="lbl">Lot clusters</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <span class="cpill ${d.confidence}">● ${d.confidence} confidence</span>
+      <span style="font-size:10px;color:var(--muted);font-family:var(--mono)">${new Date().toLocaleTimeString()}</span>
+    </div>
+    <div class="note-box">${d.notes}</div>`;
+
+  // Show annotated image in its own panel below
+  document.getElementById('ann-img').src = 'data:image/jpeg;base64,' + d.annotated_image;
+  document.getElementById('ann-caption').innerHTML =
+    `<span style="color:#00dc50">■</span> green = stall lines &nbsp;
+     <span style="color:#b43cff">■</span> magenta box = off-street lot &nbsp;
+     <span style="color:#ffa028">■</span> orange box = on-street edge cluster`;
+  document.getElementById('ann-panel').style.display='block';
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+function showLoading(msg) {
+  document.getElementById('results-content').innerHTML=
+    `<div class="loading"><div class="spinner"></div>${msg}</div>`;
+}
+function showError(msg) {
+  document.getElementById('results-content').innerHTML=`<div class="errmsg">Error: ${msg}</div>`;
+}
+function setRunning(v) {
+  document.getElementById('run-btn').disabled=v;
+  document.getElementById('run-label').textContent=v?'Querying OSM…':'Estimate on-street stalls';
+}
+</script>
+</body>
+</html>
